@@ -1,0 +1,40 @@
+# Unity generated
+Obj_Detect_Sentis/[Ll]ibrary/
+Obj_Detect_Sentis/[Tt]emp/
+Obj_Detect_Sentis/[Oo]bj/
+Obj_Detect_Sentis/[Ll]ogs/
+Obj_Detect_Sentis/UserSettings/
+
+# Visual Studio
+*.csproj
+*.sln
+.vs/
+
+# Builds
+Obj_Detect_Sentis/[Bb]uild/
+Obj_Detect_Sentis/[Bb]uilds/[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+.vs/
+.DS_Store
+
+# Python / tooling
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+
+# ML weights (do not commit)
+**/*.pth
+**/*.pt
+**/*.ckpt
+
+# Third-party repos / downloads
+Models/_thirdparty
+
+# UWP/WSA certs
+*.pfx
+*.pfx.meta
