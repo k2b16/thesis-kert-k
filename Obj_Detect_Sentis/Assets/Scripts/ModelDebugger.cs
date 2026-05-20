@@ -1,6 +1,7 @@
 using UnityEngine;
 using Unity.Sentis;
 
+// DEVELOPER UTILITY
 public class ModelDebugger : MonoBehaviour {
     [Header("assing model")]
     public ModelAsset modelAsset;

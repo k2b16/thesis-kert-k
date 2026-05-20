@@ -4,22 +4,23 @@ using System.IO;
 using UnityEngine;
 
 public class BenchmarkLogger : MonoBehaviour {
+    // Singleton
     public static BenchmarkLogger Instance { get; private set; }
 
     [Header("benchmark id")]
-    public string modelName = "ModelName_Resolution_Backend";
+    public string modelName = "ModelName_Resolution_Backend"; //CSV filename
 
     [Header("time")]
-    public float benchmarkDurationSec = 60f;
+    public float benchmarkDurationSec = 60f; //recording window
 
     [Tooltip("warmup")]
-    public float warmupSec = 5f;
+    public float warmupSec = 5f; //warmup
 
     [Header("display")]
-    public bool showOverlay = true;
+    public bool showOverlay = true;// GUi overlay
 
-    readonly List<float> _inferenceTimes = new();
-    readonly List<int> _detectionCounts = new();
+    readonly List<float> _inferenceTimes = new(); //inference latency (ms)
+    readonly List<int> _detectionCounts = new(); // detection count
     readonly List<float> _renderFpsSamples = new();
     readonly List<float> _inferenceFpsSamples = new();
 
@@ -40,26 +41,27 @@ public class BenchmarkLogger : MonoBehaviour {
     int _liveDets;
     string _statusMsg = "WARMUP";
 
+    //enforce singleton, write CSV header
     void Awake() {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
 
         _sessionStart = Time.time;
         _lastFpsWindowStart = Time.time;
-
+        //encodes model indentifier
         string safeName = modelName.Replace(" ", "_").Replace("/", "-");
         string fileName = $"bench_{safeName}_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
         _logPath = Path.Combine(Application.persistentDataPath, fileName);
 
         File.WriteAllText(_logPath, "timestamp_s,inference_ms,render_fps,inference_fps,detection_count,memory_mb\n");
     }
-
+    //drive warmup, record, state machine
     void Update() {
         float now = Time.time;
         float elapsed = now - _sessionStart;
         _renderFrameCount++;
 
-        //warmup
+        //end of warmup
         if (!_warmedUp && elapsed >= warmupSec)
         {
             _warmedUp = true;
@@ -69,7 +71,7 @@ public class BenchmarkLogger : MonoBehaviour {
             _lastFpsWindowStart = now;
         }
 
-        //sample FPS
+        //sample FPS 1 sec
         float window = now - _lastFpsWindowStart;
         if (window >= 1.0f) {
             float rFps = _renderFrameCount / window;
@@ -86,14 +88,14 @@ public class BenchmarkLogger : MonoBehaviour {
             _inferenceFrameCount = 0;
             _lastFpsWindowStart = now;
         }
-
+        //end record
         if (_running && _warmedUp && benchmarkDurationSec > 0 && elapsed >= warmupSec + benchmarkDurationSec) {
             _running = false;
             _statusMsg = "DONE";
             SaveResults();
         }
     }
-
+    // log frame once completed inference
     public void LogFrame(float inferenceMs, int detectionCount) {
         if (!_running || !_warmedUp) return;
 
@@ -105,6 +107,7 @@ public class BenchmarkLogger : MonoBehaviour {
         _liveAvgInferenceMs = Average(_inferenceTimes);
         _liveDets = detectionCount;
 
+        //GC.GetTotalMemory(false) managed heap only
         float memMB = (float)System.GC.GetTotalMemory(false) / (1024f * 1024f);
         float ts = Time.time - _sessionStart;
         string row = $"{ts:F2},{inferenceMs:F1},{_liveRenderFps:F1}," + $"{_liveInferenceFps:F1},{detectionCount},{memMB:F1}\n";
@@ -114,7 +117,6 @@ public class BenchmarkLogger : MonoBehaviour {
 
     public void SaveResults() {
         if (_saved) return; _saved = true;
-        if (_inferenceTimes.Count == 0) { Debug.LogWarning("[Benchmark] No data � was LogFrame() called from the runner?"); return; }
 
         var sorted = new List<float>(_inferenceTimes);
         sorted.Sort();
@@ -150,6 +152,7 @@ public class BenchmarkLogger : MonoBehaviour {
         try { File.AppendAllText(_logPath, summary); } catch { }
     }
 
+    //fail safes
     void OnDestroy() => SaveResults();
     void OnApplicationQuit() => SaveResults();
 
@@ -157,6 +160,7 @@ public class BenchmarkLogger : MonoBehaviour {
         if (!showOverlay) return;
 
         var style = new GUIStyle(GUI.skin.box) { fontSize = 12, alignment = TextAnchor.UpperLeft };
+        //color codes
         style.normal.textColor = _statusMsg == "REC" ? Color.green : _statusMsg == "DONE" ? Color.yellow : Color.cyan;
 
         float elapsed = Time.time - _sessionStart;
@@ -184,6 +188,7 @@ public class BenchmarkLogger : MonoBehaviour {
     static float Min(List<float> l) {
         float m = float.MaxValue; foreach (var v in l) if (v < m) m = v; return m;
     }
+    //percentile rounded index lookup
     static float Percentile(List<float> sorted, float p) {
         if (sorted.Count == 0) return 0f;
         int idx = Mathf.Clamp(Mathf.RoundToInt(p / 100f * sorted.Count), 0, sorted.Count - 1);

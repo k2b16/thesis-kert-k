@@ -8,11 +8,11 @@ using Unity.Sentis;
 public class SentisSsdRunner : MonoBehaviour {
     [Header("model")]
     public ModelAsset modelAsset;
-    public string scoresOutputName = "scores";
-    public string boxesOutputName = "boxes";
+    public string scoresOutputName = "scores"; //output tensor for scores
+    public string boxesOutputName = "boxes"; //output tensor for boxes
 
     [Header("labels")]
-    public TextAsset labelsTxt;
+    public TextAsset labelsTxt; 
     string[] _labels;
 
     [Header("scene refs")]
@@ -37,9 +37,9 @@ public class SentisSsdRunner : MonoBehaviour {
     public bool hideVideoOnDevice = true;
     public float cameraReadyTimeout = 15f;
 
-    Worker _worker;
-    WebCamTexture _cam;
-    Tensor<float> _input;
+    Worker _worker; //sentis inference
+    WebCamTexture _cam; //live frames
+    Tensor<float> _input; //allocated input tensor
     TextureTransform _tx;
 
     bool _inferenceRunning = false;
@@ -47,10 +47,11 @@ public class SentisSsdRunner : MonoBehaviour {
     readonly List<DetectionOverlay.Detection> _pendingFinal = new();
     readonly Dictionary<int, List<DetectionOverlay.Detection>> _perClass = new();
 
+
     const float CenterVariance = 0.1f;
     const float SizeVariance = 0.2f;
 
-    readonly List<Vector4> _priors = new();
+    readonly List<Vector4> _priors = new(); //priot boxes
     bool _priorsReady = false;
 
     struct Spec {
@@ -82,7 +83,7 @@ public class SentisSsdRunner : MonoBehaviour {
         }
 #endif
         yield return null;
-
+        //pick cam
         var devices = WebCamTexture.devices;
         if (devices == null || devices.Length == 0) {
             Debug.LogError("no webcam");
@@ -92,7 +93,7 @@ public class SentisSsdRunner : MonoBehaviour {
         foreach (var d in devices) if (!d.isFrontFacing) { chosen = d.name; break; }
 
         Debug.Log($"came: '{chosen}'");
-        _cam = new WebCamTexture(chosen, 896, 504, 30);
+        _cam = new WebCamTexture(chosen, 896, 504, 30); //low CPU cost
         _cam.Play();
 
         if (video != null) {
@@ -103,7 +104,7 @@ public class SentisSsdRunner : MonoBehaviour {
             video.color = Color.white; video.material = null;
 #endif
         }
-
+        //wait until webcam frames
         float t0 = Time.time;
         while (true) {
             if (_cam == null) break;
@@ -112,6 +113,7 @@ public class SentisSsdRunner : MonoBehaviour {
             yield return null;
         }
 
+        //wire the preview
         if (video != null && video.gameObject.activeSelf) {
             video.texture = _cam;
             video.rectTransform.localEulerAngles = new Vector3(0, 0, -_cam.videoRotationAngle);
@@ -123,6 +125,7 @@ public class SentisSsdRunner : MonoBehaviour {
             enabled = false; yield break;
         }
 
+        //load model and log output
         var model = ModelLoader.Load(modelAsset);
         foreach (var o in model.outputs) Debug.Log($"name='{o.name}'");
 
@@ -150,13 +153,15 @@ public class SentisSsdRunner : MonoBehaviour {
         if (!_inferenceRunning && _cam.didUpdateThisFrame) StartCoroutine(InferenceCoroutine());
     }
 
+    // note: Worker.Schedule() is sync on the cpu backend, yield return null only inserts extra frame
     IEnumerator InferenceCoroutine() {
         _inferenceRunning = true;
 
         if (_worker == null || overlay == null) { _inferenceRunning = false; yield break; }
 
+        // measure end-to-end inference lat
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        TextureConverter.ToTensor(_cam, _input, _tx);
+        TextureConverter.ToTensor(_cam, _input, _tx); //resize
         _worker.Schedule(_input);
         yield return null;
         var scoresT = _worker.PeekOutput(scoresOutputName) as Tensor<float>;
@@ -167,6 +172,7 @@ public class SentisSsdRunner : MonoBehaviour {
             _inferenceRunning = false; yield break;
         }
 
+        //tensor livves on device memory, pullcpu copy
         Tensor<float> scoresCPU = scoresT;
         Tensor<float> boxesCPU = boxesT;
 
@@ -175,6 +181,7 @@ public class SentisSsdRunner : MonoBehaviour {
             boxesCPU = boxesT.ReadbackAndClone();
         }
 
+        //flatten
         float[] scores = scoresCPU.DownloadToArray();
         float[] boxes = boxesCPU.DownloadToArray();
         sw.Stop();
@@ -184,6 +191,7 @@ public class SentisSsdRunner : MonoBehaviour {
             scoresCPU.Dispose();
             boxesCPU.Dispose();
         }
+        // decode + per class NMS
         DecodeAndNms(scoresT.shape, scores, boxesT.shape, boxes);
 
         _pendingFinal.Clear();
@@ -193,6 +201,7 @@ public class SentisSsdRunner : MonoBehaviour {
         _inferenceRunning = false;
     }
 
+    // PORT OF generate_ssd_priors() from qfgaohao/pytorch-ssd
     void BuildPriors() {
         _priors.Clear();
         foreach (var spec in Specs) {
@@ -215,6 +224,7 @@ public class SentisSsdRunner : MonoBehaviour {
                     }
                 }
         }
+        //clamp
         for (int k = 0; k < _priors.Count; k++) {
             var p = _priors[k];
             p.x = Mathf.Clamp01(p.x); p.y = Mathf.Clamp01(p.y);
@@ -225,6 +235,8 @@ public class SentisSsdRunner : MonoBehaviour {
         Debug.Log($"{_priors.Count} priors.");
     }
 
+    //decode raw network output to final detections
+    //from pytorch-ssd' convert_locations_to_boxes
     void DecodeAndNms(TensorShape scoresShape, float[] scores, TensorShape boxesShape, float[] boxes) {
         int numPriors = scoresShape[1];
         int numClasses = scoresShape[2];
@@ -234,15 +246,17 @@ public class SentisSsdRunner : MonoBehaviour {
 
         if (!_priorsReady) BuildPriors();
         for (int i = 0; i < numPriors; i++) {
+            // pick highes scoring class for prior
             int bestC = -1;
             float bestS = 0f;
             int sBase = i * numClasses;
-            for (int c = 1; c < numClasses; c++) {
+            for (int c = 1; c < numClasses; c++) { //c=0 background
                 float s = scores[sBase + c];
                 if (s > bestS) { bestS = s; bestC = c; }
             }
             if (bestC < 0 || bestS < scoreThreshold) continue;
 
+            //variacne scaled offsets
             int bBase = i * 4;
             var pr = _priors[i];
             float cx = boxes[bBase + 0] * CenterVariance * pr.z + pr.x;
@@ -250,11 +264,12 @@ public class SentisSsdRunner : MonoBehaviour {
             float w = Mathf.Exp(boxes[bBase + 2] * SizeVariance) * pr.z;
             float h = Mathf.Exp(boxes[bBase + 3] * SizeVariance) * pr.w;
 
+            //center form to corner form, clamp 0-1
             float xmin = Mathf.Clamp01(cx - w * 0.5f);
             float ymin = Mathf.Clamp01(cy - h * 0.5f);
             float xmax = Mathf.Clamp01(cx + w * 0.5f);
             float ymax = Mathf.Clamp01(cy + h * 0.5f);
-            if (xmax <= xmin || ymax <= ymin) continue;
+            if (xmax <= xmin || ymax <= ymin) continue; //ungenerate box
 
             var d = new DetectionOverlay.Detection {
                 left = xmin,
@@ -265,18 +280,22 @@ public class SentisSsdRunner : MonoBehaviour {
                 classId = bestC,
                 label = (_labels != null && bestC < _labels.Length) ? _labels[bestC] : bestC.ToString()
             };
+            // bundles by class for NMS application per class
             if (!_perClass.TryGetValue(bestC, out var list)) {
                 list = new List<DetectionOverlay.Detection>();
                 _perClass[bestC] = list;
             }
             list.Add(d);
         }
-
+        //riun NMS independetly, later merge
         foreach (var kv in _perClass) _final.AddRange(HardNms(kv.Value, iouThreshold, candidateSize));
+        //cap merged set by score
         _final.Sort((a, b) => b.score.CompareTo(a.score));
         if (_final.Count > maxDetections) _final.RemoveRange(maxDetections, _final.Count - maxDetections);
     }
 
+    //hard NMS
+    //POST of hard_nms() from qfgaohao/pytorch-ssd
     List<DetectionOverlay.Detection> HardNms(List<DetectionOverlay.Detection> dets, float iouThr, int candSize) {
         dets.Sort((a, b) => b.score.CompareTo(a.score));
         if (dets.Count > candSize) dets = dets.GetRange(0, candSize);
@@ -289,6 +308,7 @@ public class SentisSsdRunner : MonoBehaviour {
         return kept;
     }
 
+    //intersection over union, epsilon avoids divide by zero
     float IoU(DetectionOverlay.Detection a, DetectionOverlay.Detection b) {
         float ix1 = Mathf.Max(a.left, b.left);
         float iy1 = Mathf.Max(a.top, b.top);
@@ -300,9 +320,9 @@ public class SentisSsdRunner : MonoBehaviour {
         return inter / (areaA + areaB - inter + 1e-5f);
     }
 
+    // cleanup, for UWP
     void OnDestroy() {
-        _worker?.Dispose();
-        _input?.Dispose();
+        _worker?.Dispose(); _input?.Dispose();
         if (_cam != null && _cam.isPlaying) _cam.Stop();
     }
 }
