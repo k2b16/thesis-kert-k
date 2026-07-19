@@ -129,6 +129,8 @@ public class SentisSsdRunner : MonoBehaviour {
         var model = ModelLoader.Load(modelAsset);
         foreach (var o in model.outputs) Debug.Log($"name='{o.name}'");
 
+        ApplyInputShapeFromModel(model);
+
         _worker = new Worker(model, backend);
         _input = new Tensor<float>(new TensorShape(1, 3, inputSize, inputSize));
         _tx = new TextureTransform()
@@ -199,6 +201,22 @@ public class SentisSsdRunner : MonoBehaviour {
         BenchmarkLogger.Instance?.LogFrame(inferenceMs, _final.Count);
         if (intervalSec > 0) yield return new WaitForSeconds(intervalSec);
         _inferenceRunning = false;
+    }
+
+    void ApplyInputShapeFromModel(Model model) {
+        if (model.inputs.Count == 0) return;
+
+        var shape = model.inputs[0].shape;
+        if (shape.rank != 4) return;
+
+        int channels = shape[1];
+        int height = shape[2];
+        int width = shape[3];
+
+        if (channels == 3 && height > 0 && width > 0 && height == width) {
+            inputSize = height;
+            Debug.Log($"[SSD] input size from model: {inputSize}x{inputSize}");
+        }
     }
 
     // PORT OF generate_ssd_priors() from qfgaohao/pytorch-ssd

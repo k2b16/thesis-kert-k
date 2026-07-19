@@ -19,9 +19,9 @@ Selected based on Lazar (2021), which compared TensorFlow.js, Unity Barracuda, W
 
 | Model | Architecture | Training data | Input | Parameters | Labels |
 |---|---|---|---|---|---|
-| YOLOv8n | Anchor-free | COCO | 320×256 | 3.2M | Coco80.txt |
-| YOLOv8s | Anchor-free | COCO | 320×256 | 11.2M | Coco80.txt |
-| YOLOv10n | NMS-free | COCO | 320×256 | 2.3M | Coco80.txt |
+| YOLOv8n | Anchor-free | COCO | 320×256, **256×192** | 3.2M | Coco80.txt |
+| YOLOv8s | Anchor-free | COCO | 320×256, **256×192** | 11.2M | Coco80.txt |
+| YOLOv10n | NMS-free | COCO | 320×256, **256×192** | 2.3M | Coco80.txt |
 | Tiny YOLOv2 | Anchor-based | VOC | 416×416 | 15.9M | Voc20.txt |
 | SSD MobileNetV1 | Multi-scale | VOC | 300×300 | 5.1M | voc-model-labels.txt |
 | SSD MobileNetV2 | Inverted residual | VOC | 300×300 | 4.3M | voc-model-labels.txt |
@@ -89,14 +89,53 @@ Evaluation/
 ├── labels/                      ← Label files
 └── test/                        ← Test images + _annotations.coco.json
  
-Python/
-├── export_yolo.py               ← YOLOv8/v10 ONNX export
-├── export_tinyyolo.py           ← Tiny YOLOv2 conversion
-└── export_ssd.py                ← SSD pytorch-ssd conversion
+Models/
+├── export_yolo_onnx.py          ← YOLOv8/v10 ONNX export (320×256 and 256×192)
+├── convert_ssdv2_onnx.py        ← SSD MobileNetV2 conversion
+└── requirements.txt
 ```
  
 ---
 
+## Model optimization
+
+### Resize (recommended first step)
+
+Smaller inputs reduce HoloLens inference time with modest accuracy loss. Export both default and resized variants:
+
+```bash
+cd Models/
+pip install ultralytics onnx onnxsim
+python export_yolo_onnx.py --sizes 320x256 256x192
+```
+
+Copy the new ONNX files into:
+
+- `Evaluation/models/` for mAP evaluation
+- `Obj_Detect_Sentis/Assets/Models/` for HoloLens deployment
+
+Runners auto-read input width/height from the loaded model, so you only need to assign the new `ModelAsset`.
+
+Evaluate resized models on PC:
+
+```bash
+cd Evaluation/
+python evaluate_map.py --test_dir test --models_dir models --labels_dir labels --include-resized
+```
+
+### Uint8 / Float16 quantization (Unity Sentis)
+
+Sentis **does not import** externally quantized ONNX (`QuantizeLinear` / `DequantizeLinear` ops). Quantize inside Unity instead:
+
+1. Place ONNX models in `Obj_Detect_Sentis/Assets/Models/`
+2. In Unity: select a model asset → **Thesis → Quantize Selected Model Assets → Uint8** (or Float16)
+3. Assign the generated `*_uint8.sentis` or `*_fp16.sentis` file to the runner's **Model Asset** field
+4. Re-run HoloLens benchmarks and compare latency + detection quality
+
+Uint8 mainly reduces disk/memory footprint; inference speed on CPU may change little. Resizing usually gives a larger latency win on HoloLens.
+
+---
+ 
 ## mAP Evaluation
  
 ```bash

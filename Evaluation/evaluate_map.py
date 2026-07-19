@@ -8,34 +8,25 @@ import onnxruntime as ort
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
+def yolo_cfg(name, stem, yolo_type, width, height):
+    return {
+        "name": name,
+        "file": f"{stem}_{width}x{height}.onnx",
+        "type": yolo_type,
+        "width": width,
+        "height": height,
+        "labels": "Coco80.txt",
+        "threshold": 0.45,
+    }
+
+
 MODELS = [
-    {
-        "name": "YOLOv8n",
-        "file": "yolov8n_320x256.onnx",
-        "type": "yolov8",
-        "width": 320,
-        "height": 256,
-        "labels": "Coco80.txt",
-        "threshold": 0.45,
-    },
-    {
-        "name": "YOLOv8s",
-        "file": "yolov8s_320x256.onnx",
-        "type": "yolov8",
-        "width": 320,
-        "height": 256,
-        "labels": "Coco80.txt",
-        "threshold": 0.45,
-    },
-    {
-        "name": "YOLOv10n",
-        "file": "yolov10n_320x256.onnx",
-        "type": "yolov10",
-        "width": 320,
-        "height": 256,
-        "labels": "Coco80.txt",
-        "threshold": 0.45,
-    },
+    yolo_cfg("YOLOv8n", "yolov8n", "yolov8", 320, 256),
+    yolo_cfg("YOLOv8s", "yolov8s", "yolov8", 320, 256),
+    yolo_cfg("YOLOv10n", "yolov10n", "yolov10", 320, 256),
+    yolo_cfg("YOLOv8n-256x192", "yolov8n", "yolov8", 256, 192),
+    yolo_cfg("YOLOv8s-256x192", "yolov8s", "yolov8", 256, 192),
+    yolo_cfg("YOLOv10n-256x192", "yolov10n", "yolov10", 256, 192),
     {
         "name": "TinyYOLOv2",
         "file": "tinyyolov2-8.onnx",
@@ -357,6 +348,11 @@ def main():
     parser.add_argument("--test_dir",   default="test",   help="Path to test folder with images + _annotations.coco.json")
     parser.add_argument("--models_dir", default="models", help="Path to folder with ONNX model files")
     parser.add_argument("--labels_dir", default=".",      help="Path to folder with label .txt files")
+    parser.add_argument(
+        "--include-resized",
+        action="store_true",
+        help="Also evaluate 256x192 YOLO exports (requires exported ONNX files)",
+    )
     args = parser.parse_args()
 
     ann_file = os.path.join(args.test_dir, "_annotations.coco.json")
@@ -371,7 +367,12 @@ def main():
 
     all_results = []
 
+    resized_names = {"YOLOv8n-256x192", "YOLOv8s-256x192", "YOLOv10n-256x192"}
+
     for model_cfg in MODELS:
+        if model_cfg["name"] in resized_names and not args.include_resized:
+            continue
+
         print(f"\nEval: {model_cfg['name']}")
 
         labels_path = os.path.join(args.labels_dir, model_cfg["labels"])
