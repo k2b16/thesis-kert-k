@@ -120,6 +120,8 @@ public class SentisYoloRunner : MonoBehaviour {
         Debug.Log($"model output ({model.outputs.Count})");
         foreach (var o in model.outputs) Debug.Log($"name='{o.name}'");
 
+        ApplyInputShapeFromModel(model);
+
         //pre allocated tensor
         _worker = new Worker(model, backend);
         _input = new Tensor<float>(new TensorShape(1, 3, inputHeight, inputWidth));
@@ -399,6 +401,23 @@ public class SentisYoloRunner : MonoBehaviour {
         // no NMS pass
         _final.Sort((a, b) => b.score.CompareTo(a.score));
         if (_final.Count > maxDetections) _final.RemoveRange(maxDetections, _final.Count - maxDetections);
+    }
+
+    void ApplyInputShapeFromModel(Model model) {
+        if (model.inputs.Count == 0) return;
+
+        var shape = model.inputs[0].shape;
+        if (shape.rank != 4) return;
+
+        int channels = shape[1];
+        int height = shape[2];
+        int width = shape[3];
+
+        if (channels == 3 && height > 0 && width > 0) {
+            inputHeight = height;
+            inputWidth = width;
+            Debug.Log($"input size from model: {inputWidth}x{inputHeight}");
+        }
     }
 
     // HELPERS
